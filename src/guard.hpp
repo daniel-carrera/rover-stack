@@ -23,6 +23,9 @@ struct Command{
     bool is_stop;
 };
 
+// flesh this out
+enum class Verdict;
+
 // command is a full copy, string included, can be optimized for later
 // repeat_command tells the loop whether the frame is new or a re-send
 // Loop writes the same frame anyways, but this is information for the log, not the port
