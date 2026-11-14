@@ -5,6 +5,7 @@
 #include <chrono>
 #include <optional>
 
+// Time and Duration aliases from <chrono>
 #include "src/clock.hpp"
 
 // The handler builds the command, stamps it, calls admit for the verdict, answers the request
@@ -36,27 +37,28 @@ struct TickOutput{
 class Guard {
 public:
     Guard(
-        std::chrono::steady_clock::duration lease,
-        std::chrono::steady_clock::duration tick_period,
-        Clock& clock
-    ): lease_(lease), tick_(tick), clock_(clock){}
+        Duration lease,
+        Duration tick_period,
+    ): lease_(lease), tick_(tick){}
 
     // returns true (command accepted) or false (command rejected)
-    bool admit(Command command, std::chrono::steady_clock now);
+    bool admit(Command command, Time now);
     
-    // 
-    TickOutput tick(std::optional<Command> command, std::chrono::steady_clock now);
+    // Processes one tick:
+    // Command waiting: runs admit with command and now.
+        // if command accepted: send it back, update current command, timestamp
+        // if refused: update TickOutput as necessary with lapse flag and stops to send
+    TickOutput tick(std::optional<Command> command, Time now);
 
 private: 
     const unsigned int STOP_BURST = 3;
     const unsigned int BURST_REPEAT = 1;
 
-    std::chrono::steady_clock::duration lease_;
-    std::chrono::steady_clock::duration tick_period_;
-    Clock& clock_;
+    Duration lease_;
+    Duration tick_period_;
 
     Command current_command;
-    std::chrono::time_point command_time_stamp;
+    Time command_time_stamp;
     std::vector<string> lapsed_press_ids;
     bool latched;
 
