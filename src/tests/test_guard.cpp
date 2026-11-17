@@ -9,7 +9,7 @@
 #include "src/tests/kit.hpp"
 
 
-bool check_double_equal(const double test, const double correct){
+bool check_double_equal(const double test, const double correct) {
     double abs_diff = std::abs(test - correct);
     bool same = abs_diff < 1e-9;
     CHECK_EQ(same, true);
@@ -20,8 +20,7 @@ bool check_double_equal(const double test, const double correct){
     return true;
 }
 
-
-void compare_command(Command test, Command expected){
+void compare_command(Command test, Command expected) {
     if (!check_double_equal(test.x, expected.x)){
         std::cout << "Invalid x value found for Command\n";
     }
@@ -33,68 +32,196 @@ void compare_command(Command test, Command expected){
     return;
 }
 
-void compare_tick_output(TickOutput test, TickOutput expected){
+void compare_tick_output(TickOutput test, TickOutput expected) {
     compare_command(test.command, expected.command);
-    CHECK_EQ(test.repeat_command, expected.repeat_command);
-    CHECK_EQ(test.stops_to_send, expected.stops_to_send);
-    CHECK_EQ(test.lapse_found, expected.lapse_found);
+    CHECK_EQ(static_cast<int>(test.kind), static_cast<int>(expected.kind));
     return;
 }
 
-// 1. Healthy command every 50ms for 10s, never a stop
+// TODO: 
+
+// 1. Healthy command every 50ms for 10s, never a stop 
 void test_healthy_command(Duration lease, Duration tick_period){
     Command command {
-        .x = 0.05,
-        .y = 0.05,
+        .x = 0,
+        .y = 0,
         .press_id = "press_id_0",
         .is_stop = false
     };
 
     TickOutput expected_tick_output {
         .command = {
-            .x = 0.05,
-            .y = 0.05,
+            .x = 0,
+            .y = 0,
             .press_id = "press_id_0",
             .is_stop = false
         },
-        .repeat_command = false,
-        .stops_to_send = 0,
-        .lapse_found = false
-    };
-
+        .kind = TickOutputType::regular_command 
+    }; 
 
     Guard guard(lease, tick_period);
 
-    Time curr_time = 0;
-    while (curr_time < 10000){
+    Time start_time = Time{};
+    Time curr_time = Time{};
+    while (curr_time - start_time < std::chrono::milliseconds{10000}){
 
-        if (curr_time == 50){
+        if (curr_time - start_time >= std::chrono::milliseconds{50}){
             command.x = 0.5;
             command.y = 0.5;
             expected_tick_output.command.x = 0.5;
             expected_tick_output.command.y = 0.5;
+            expected_tick_output.kind = TickOutputType::regular_command;
         }
-        expected_tick_output.repeat_command = false;
 
-        // fix admit
-        bool accepted = guard.admit(command, curr_time);
-        CHECK_EQ(accepted, true);
+        Verdict admit_verdict = guard.admit(command, curr_time);
+        CHECK_EQ(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted));
 
         TickOutput tick_output = guard.tick(command, curr_time);
         compare_tick_output(tick_output, expected_tick_output);
-        curr_time += 25;
+        curr_time += std::chrono::milliseconds{25};
 
-        expected_tick_output.repeat_command = true;
+        expected_tick_output.kind = TickOutputType::repeat_command;
         tick_output = guard.tick(std::nullopt, curr_time);
         compare_tick_output(tick_output, expected_tick_output);
-        curr_time += 25;
+        curr_time += std::chrono::milliseconds{25};
     }
 
     return;
 }
 
 
+// 2. Silence: last command at t; the burst at the first tick at or past t + 0.3; 
+//    STOP current; a stop every tick; 
+//    the burst again at t + 0.6.
+
+// this tests assumes that the tick period is 25ms and lease is 300ms
+// TODO: make test reliable to dynamic lease and tick period (ceil div check curr tick lapsed)
+void test_silence(Duration lease, Duration tick_period){
+    // when the tick processes a command and it produces a stop
+    // the returned command in TickOutput will carry the press id 
+    // of the last command it saw
+    Command command {
+        .x = 0,
+        .y = 0,
+        .press_id = "press_id_0",
+        .is_stop = false
+    };
+
+    Guard guard(lease, tick_period);
+
+    Time start_time = Time{0};
+    Time curr_time = Time{0};
+
+    // first command is sent at time = 0, passed into the loop
+    // we tick, after x ticks we hit lapse_time at that point the lease will lapse
+    // we should do another round of lapse_time, for another x ticks, and at the last tick, we should get a burst
+    // then we exit the loop
+
+    // The lease expires when we are at or over the lease time
+    Duration lapse_time = lease;
+    if (lease % tick_period != tick_period.zero()){
+        Duration remainder = lease % tick_period;
+        lapse_time = lapse_time + (tick_period - remainder);
+    }
+    Duration lapse_time_twice = lapse_time * 2;
+
+    // stop when we are over the lapse time * 2
+    while (curr_time - start_time <= lapse_time_twice){
+        Duration time_diff = curr_time - start_time;
+        
+        // we only ever recieve one command at t = 0 so we only admit it once in the loop
+        if (time_diff == std::chrono::milliseconds{0}){
+            TickOutput regular_tick_output {
+                .command = {
+                    .x = 0,
+                    .y = 0,
+                    .press_id = "press_id_0",
+                    .is_stop = false
+                },
+                .kind = TickOutputType::regular_command 
+            }; 
+
+            Verdict admit_verdict = guard.admit(command, curr_time);
+            CHECK_EQ(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted));
+
+            TickOutput tick_output = guard.tick(command, curr_time);
+            compare_tick_output(tick_output, regular_tick_output); 
+            
+            curr_time += tick_period;
+            continue;
+        }
+
+        if (time_diff > std::chrono::milliseconds{0} && time_diff < lapse_time) {
+            TickOutput repeat_tick_output {
+                .command = {
+                    .x = 0,
+                    .y = 0,
+                    .press_id = "press_id_0",
+                    .is_stop = false
+                },
+                .kind = TickOutputType::repeat_command 
+            }; 
+            TickOutput tick_output = guard.tick(std::nullopt, curr_time);
+            compare_tick_output(tick_output, repeat_tick_output);
+            curr_time += tick_period;
+            continue;
+        }
+        
+        // if time is lapsed, check expected burst
+        if (time_diff == lapse_time){
+            TickOutput lapse_tick_output {
+                .command = {
+                    .x = 0,
+                    .y = 0,
+                    .press_id = "press_id_0",
+                    .is_stop = true
+                },
+                .kind = TickOutputType::lapse 
+            }; 
+            TickOutput tick_output = guard.tick(std::nullopt, curr_time);
+            compare_tick_output(tick_output, lapse_tick_output);
+            curr_time += tick_period;
+            continue;
+        }
+        
+        // if time is after lapsed, check expected latched stop
+        if (time_diff > lapse_time && time_diff < lapse_time_twice) {
+            TickOutput latched_stop_tick_output {
+                .command = {
+                    .x = 0,
+                    .y = 0,
+                    .press_id = "press_id_0",
+                    .is_stop = true
+                },
+                .kind = TickOutputType::latched_stop     
+            };
+            TickOutput tick_output = guard.tick(std::nullopt, curr_time);
+            compare_tick_output(tick_output, latched_stop_tick_output);
+            curr_time += tick_period;
+            continue;
+        }
+
+        // if time is lapsed 2x, check expected burst
+        if (time_diff == lapse_time_twice){
+            TickOutput latched_burst_tick_output {
+                .command = {
+                    .x = 0,
+                    .y = 0,
+                    .press_id = "press_id_0",
+                    .is_stop = true
+                },
+                .kind = TickOutputType::latched_burst     
+            };
+            TickOutput tick_output = guard.tick(std::nullopt, curr_time);
+            compare_tick_output(tick_output, latched_burst_tick_output);
+            curr_time += tick_period;
+            continue;
+        }
+    }
+}
+
+
 int main(){
-    test_healthy_command(300, 25);
+    test_healthy_command(std::chrono::milliseconds{300}, std::chrono::milliseconds{25});
     return kit::finish();
 }
