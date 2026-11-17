@@ -23,7 +23,7 @@
 struct Command{
     double x;
     double y;
-    string press_id;
+    std::string press_id;
     bool is_stop;
 };
 
@@ -58,8 +58,8 @@ class Guard {
 public:
     Guard(
         Duration lease,
-        Duration tick_period,
-    ): lease_(lease), tick_(tick){}
+        Duration tick_period
+    ): lease_(lease), tick_period_(tick_period){};
 
     // returns true (command accepted) or false (command rejected)
     // checks:
@@ -85,7 +85,7 @@ private:
 
     Command current_command;
     Time command_time_stamp;
-    std::vector<string> lapsed_press_ids;
+    std::vector<std::string> lapsed_press_ids;
     bool latched;
 
     double center_band = 0.1; // need to verify this is correct

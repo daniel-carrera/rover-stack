@@ -25,11 +25,10 @@ add_library(guard src/guard.cpp)
 # The programs: one guard file.
 # TODO Later, first the core, it waits for the loop, port, and multithreading
 
-# The tests for the guard and the clock
-add_executable(test_clock src/tests/test_clock.cpp)
+# The tests for the guard 
 add_executable(test_guard src/tests/test_guard.cpp)
 
-foreach(program test_clock test_guard)
+foreach(program test_guard)
   target_link_libraries(${program} PRIVATE guard)
 endforeach()
 

@@ -6,7 +6,7 @@
 
 #include "src/clock.hpp"
 #include "src/guard.hpp"
-#include "src/tests/kit.hpp"
+#include "src/tests/check.hpp"
 
 
 bool check_double_equal(const double test, const double correct) {
@@ -38,7 +38,6 @@ void compare_tick_output(TickOutput test, TickOutput expected) {
     return;
 }
 
-// TODO: 
 
 // 1. Healthy command every 50ms for 10s, never a stop 
 void test_healthy_command(Duration lease, Duration tick_period){
@@ -103,8 +102,8 @@ void test_silence(Duration lease, Duration tick_period){
 
     Guard guard(lease, tick_period);
 
-    Time start_time = Time{0};
-    Time curr_time = Time{0};
+    Time start_time = Time{};
+    Time curr_time = Time{};
 
     // first command is sent at time = 0, passed into the loop
     // we tick, after x ticks we hit lapse_time at that point the lease will lapse
@@ -214,6 +213,232 @@ void test_silence(Duration lease, Duration tick_period){
     }
 }
 
+// 3. Loss tolerance
+// 4 consecutive missing posts survive, 5 trip
+// Posts every 50ms, lease is 300ms, tick period is 25ms
+void test_loss_tolerance(){
+    Command command {
+        .x = 0,
+        .y = 0,
+        .press_id = "press_id_0",
+        .is_stop = false
+    };
+    Guard guard(std::chrono::milliseconds{300}, std::chrono::milliseconds{25});
+
+    Time start_time = Time{};
+    Time curr_time = Time{};
+
+    // Trip run: arrival at 0 is accepted
+    // ticks 25 -> 275 repeat
+    // arrival at 300, refused stale, dropped
+    // tick at 300 nothing, lapse triggered
+    // tick at 325 latched stop
+    // end
+    while (curr_time - start_time <= std::chrono::milliseconds{350}){
+        Duration time_diff = curr_time - start_time;
+
+        if (time_diff > std::chrono::milliseconds{300}){
+            TickOutput latched_stop_tick_output = {
+                .command = {
+                    .x = 0,
+                    .y = 0,
+                    .press_id = "press_id_0",
+                    .is_stop = true
+                },
+                .kind = TickOutputType::latched_stop
+            };
+            Verdict admit_verdict = guard.admit(command, curr_time);
+            CHECK_EQ(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_stale));
+            TickOutput tick_output = guard.tick(std::nullopt, curr_time);
+            compare_tick_output(tick_output, latched_stop_tick_output);
+            curr_time += std::chrono::milliseconds{25};
+            continue;
+        }
+
+        if (time_diff == std::chrono::milliseconds{300}){
+            TickOutput refused_tick_output = {
+                .command = {
+                    .x = 0,
+                    .y = 0,
+                    .press_id = "press_id_0",
+                    .is_stop = true
+                },
+                .kind = TickOutputType::lapse
+            };
+            Verdict admit_verdict = guard.admit(command, curr_time);
+            CHECK_EQ(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_stale));
+            TickOutput tick_output = guard.tick(std::nullopt, curr_time);
+            compare_tick_output(tick_output, refused_tick_output);
+            curr_time += std::chrono::milliseconds{25};
+            continue;
+        }
+        if (time_diff == std::chrono::milliseconds{0}){
+            TickOutput regular_tick_output = {
+                .command = {
+                    .x = 0,
+                    .y = 0,
+                    .press_id = "press_id_0",
+                    .is_stop = false
+                },
+                .kind = TickOutputType::regular_command
+            };
+            Verdict admit_verdict = guard.admit(command, curr_time);
+            CHECK_EQ(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted));
+            TickOutput tick_output = guard.tick(command, curr_time);
+            compare_tick_output(tick_output, regular_tick_output);
+            curr_time += std::chrono::milliseconds{25};
+            continue;
+        }
+        TickOutput repeat_tick_output = {
+            .command = {
+                .x = 0,
+                .y = 0,
+                .press_id = "press_id_0",
+                .is_stop = false
+            },
+            .kind = TickOutputType::repeat_command
+        };
+        // 1 tick without an arrival
+        TickOutput tick_output = guard.tick(std::nullopt, curr_time);
+        compare_tick_output(tick_output, repeat_tick_output);
+        curr_time += std::chrono::milliseconds{25};
+        continue;
+    }
+
+
+    // Survive run
+    // arrival at 0 accepted, ticks 25 -> 225 repeat command
+    // arrival at 250 accepted, new frame
+    // ticks 275 -> 300 repeat, last repeat at 300 accepted repeat, end.
+    while (curr_time - start_time <= std::chrono::milliseconds{300}){
+        Duration time_diff = curr_time - start_time;
+
+        if (time_diff == std::chrono::milliseconds{0} || time_diff == std::chrono::milliseconds{250}){
+            TickOutput regular_tick_output = {
+                .command = {
+                    .x = 0,
+                    .y = 0,
+                    .press_id = "press_id_0",
+                    .is_stop = false
+                },
+                .kind = TickOutputType::regular_command
+            };
+            Verdict admit_verdict = guard.admit(command, curr_time);
+            CHECK_EQ(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted));
+            TickOutput tick_output = guard.tick(command, curr_time);
+            compare_tick_output(tick_output, regular_tick_output);
+            curr_time += std::chrono::milliseconds{25};
+            continue;
+        }
+        TickOutput repeat_tick_output = {
+            .command = {
+                .x = 0,
+                .y = 0,
+                .press_id = "press_id_0",
+                .is_stop = false
+            },
+            .kind = TickOutputType::repeat_command
+        };
+        // 1 tick of the same repeated command
+        TickOutput tick_output = guard.tick(std::nullopt, curr_time);
+        compare_tick_output(tick_output, repeat_tick_output);
+        curr_time += std::chrono::milliseconds{25};
+        continue;
+    }
+
+
+}
+
+// 4. arrives 0.3 s or more after the last accepted; refused stale; the stops go out.
+// Lease is 300ms, posts every 50ms, tick period is 25ms
+void test_late_command(){
+    Command command {
+        .x = 0,
+        .y = 0,
+        .press_id = "press_id_0",
+        .is_stop = false
+    };
+    Guard guard(std::chrono::milliseconds{300}, std::chrono::milliseconds{25});
+    Time start_time = Time{};
+    Time curr_time = Time{};
+
+    // Last accepted command at t = 0
+    // no commands arrive until t = 400, past the lease of 300.
+    // the 400 arrival has same press_id as t = 0, it is stale and dropped
+    // past 400, latched_stop continues
+    while (curr_time - start_time <= std::chrono::milliseconds{500}){
+        Duration time_diff = curr_time - start_time;
+        
+        if (time_diff > std::chrono::milliseconds{300}){
+            TickOutput latched_stop_tick_output = {
+                .command = {
+                    .x = 0,
+                    .y = 0,
+                    .press_id = "press_id_0",
+                    .is_stop = true
+                },
+                .kind = TickOutputType::latched_stop
+            };
+            if (time_diff == std::chrono::milliseconds{400}){
+                Verdict admit_verdict = guard.admit(command, curr_time);
+                CHECK_EQ(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_stale));
+            }
+            TickOutput tick_output = guard.tick(std::nullopt, curr_time);
+            compare_tick_output(tick_output, latched_stop_tick_output);
+            curr_time += std::chrono::milliseconds{25};
+            continue;
+        }
+
+        if (time_diff == std::chrono::milliseconds{300}){
+            TickOutput lapsed_tick_output = {
+                .command = {
+                    .x = 0,
+                    .y = 0,
+                    .press_id = "press_id_0",
+                    .is_stop = true
+                },
+                .kind = TickOutputType::lapse
+            };
+            TickOutput tick_output = guard.tick(std::nullopt, curr_time);
+            compare_tick_output(tick_output, lapsed_tick_output);
+            curr_time += std::chrono::milliseconds{25};
+            continue;
+        }
+
+        if (time_diff == std::chrono::milliseconds{0}){
+            TickOutput regular_tick_output = {
+                .command = {
+                    .x = 0,
+                    .y = 0,
+                    .press_id = "press_id_0",
+                    .is_stop = false
+                },
+                .kind = TickOutputType::regular_command
+            };
+            Verdict admit_verdict = guard.admit(command, curr_time);
+            CHECK_EQ(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted));
+            TickOutput tick_output = guard.tick(command, curr_time);
+            compare_tick_output(tick_output, regular_tick_output);
+            curr_time += std::chrono::milliseconds{25};
+            continue;
+        }
+
+        TickOutput repeat_tick_output = {
+            .command = {
+                .x = 0,
+                .y = 0,
+                .press_id = "press_id_0",
+                .is_stop = false
+            },
+            .kind = TickOutputType::repeat_command
+        };
+        // 1 tick without an arrival
+        TickOutput tick_output = guard.tick(std::nullopt, curr_time);
+        compare_tick_output(tick_output, repeat_tick_output);
+        curr_time += std::chrono::milliseconds{25};
+        continue;
+    }
+}
 
 int main(){
     test_healthy_command(std::chrono::milliseconds{300}, std::chrono::milliseconds{25});
