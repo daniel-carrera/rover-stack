@@ -4,6 +4,8 @@
 #include <string>
 #include <chrono>
 #include <optional>
+#include <cmath>
+#include <unordered_set>
 
 // Time and Duration aliases from <chrono>
 #include "src/clock.hpp"
@@ -15,6 +17,11 @@
 // if its a repeat command (for logging), if its a lapse and how many stops to send if any
 // the loop then builds the frame based on the TickOutput and sends that to the port.
 // That explains why tick requires a now and an optional command
+
+// Now before the stamp: The core loop handles a steady clock, which never runs backwards
+// the fake clock in the tests only runs forwards.
+// A negative difference between stamp and now cannot happen, if it did the lease comparison would read as fresh.
+
 
 // command created by the loop, passed to guard
 // x, y are stick direction components
@@ -39,7 +46,6 @@ enum class Verdict {
 // Kinds of tick output result, processed by loop
 // This is a design choice, and the core loop needs to interpret and decide how to handle each of these cases
 enum class TickOutputType {
-    latched_start_command, // a stop while latched with nothing current yet
     regular_command, // new command, new frame to send
     repeat_command, // repeated command, same frame as before
     stop_command, // explicit stop request, with no lapse
@@ -59,7 +65,7 @@ public:
     Guard(
         Duration lease,
         Duration tick_period
-    ): lease_(lease), tick_period_(tick_period){};
+    ): lease_(lease), tick_period_(tick_period){}
 
     // returns true (command accepted) or false (command rejected)
     // checks:
@@ -83,13 +89,21 @@ private:
     Duration lease_;
     Duration tick_period_;
 
-    Command current_command;
-    Time command_time_stamp;
-    std::vector<std::string> lapsed_press_ids;
-    bool latched;
-
-    double center_band = 0.1; // need to verify this is correct
-    double max_stick_value = 1;
-    double min_stick_value = -1;
+    Command current_command_ = {
+        .x = 0.0,
+        .y = 0.0,
+        .press_id = "",
+        .is_stop = true
+    };
+    Time command_time_stamp_ = Time{};
+    std::optional<Time> last_burst_time_stamp_ = std::nullopt; // the latched branch bursts when there is 
+    // no last burst (startup), or a whole lease has passed since. 
+    std::unordered_set<std::string> lapsed_press_ids_;
+    bool latched_ = true;
+    
+    // inclusive to the value is valid
+    double center_band_ = 0.1; // need to verify this is correct
+    double max_stick_value_ = 1.0;
+    double min_stick_value_ = -1.0;
 
 };
