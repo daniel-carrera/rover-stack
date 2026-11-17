@@ -89,13 +89,7 @@ void test_healthy_command(Duration lease, Duration tick_period){
     return;
 }
 
-
-// 2. Silence: last command at t; the burst at the first tick at or past t + 0.3; 
-//    STOP current; a stop every tick; 
-//    the burst again at t + 0.6.
-
-// this tests assumes that the tick period is 25ms and lease is 300ms
-// TODO: make test reliable to dynamic lease and tick period (ceil div check curr tick lapsed)
+// 2. Silence: last command at t
 void test_silence(Duration lease, Duration tick_period){
     // when the tick processes a command and it produces a stop
     // the returned command in TickOutput will carry the press id 
