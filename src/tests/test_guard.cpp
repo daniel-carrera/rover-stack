@@ -40,7 +40,8 @@ void compare_tick_output(TickOutput test, TickOutput expected) {
 
 
 // 1. Healthy command every 50ms for 10s, never a stop 
-void test_healthy_command(Duration lease, Duration tick_period){
+// tick period is 25ms
+void test_healthy_command(Duration lease){
     Command command {
         .x = 0,
         .y = 0,
@@ -58,7 +59,7 @@ void test_healthy_command(Duration lease, Duration tick_period){
         .kind = TickOutputType::regular_command 
     }; 
 
-    Guard guard(lease, tick_period);
+    Guard guard(lease);
 
     Time start_time = Time{};
     Time curr_time = Time{};
@@ -100,7 +101,7 @@ void test_silence(Duration lease, Duration tick_period){
         .is_stop = false
     };
 
-    Guard guard(lease, tick_period);
+    Guard guard(lease);
 
     Time start_time = Time{};
     Time curr_time = Time{};
@@ -223,7 +224,7 @@ void test_loss_tolerance(){
         .press_id = "press_id_0",
         .is_stop = false
     };
-    Guard guard(std::chrono::milliseconds{300}, std::chrono::milliseconds{25});
+    Guard guard(std::chrono::milliseconds{300});
 
     Time start_time = Time{};
     Time curr_time = Time{};
@@ -358,7 +359,7 @@ void test_late_command(){
         .press_id = "press_id_0",
         .is_stop = false
     };
-    Guard guard(std::chrono::milliseconds{300}, std::chrono::milliseconds{25});
+    Guard guard(std::chrono::milliseconds{300});
     Time start_time = Time{};
     Time curr_time = Time{};
 
@@ -440,7 +441,17 @@ void test_late_command(){
     }
 }
 
+// 8. 
+// TODO: An empty press id. At startup the current id is empty, so a post with an empty id reads as “the same press” 
+// and can be accepted if centred. The page should never send one, so we refuse it where the bool is refused, in the parser, 
+// and note it in test 8’s comment with the bool.
+
 int main(){
-    test_healthy_command(std::chrono::milliseconds{300}, std::chrono::milliseconds{25});
+
+    test_healthy_command(std::chrono::milliseconds{300});
+    test_silence(std::chrono::milliseconds{300}, std::chrono::milliseconds{25});
+    test_loss_tolerance();
+    test_late_command();
+    
     return kit::finish();
 }
