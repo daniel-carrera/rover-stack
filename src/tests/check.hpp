@@ -14,6 +14,7 @@ namespace kit {
 
 inline int checks = 0;
 inline int failures = 0;
+inline const char* current_test = "";
 
 template <typename T>
 std::string show(const T& value) {
@@ -36,14 +37,15 @@ std::string show(const std::optional<T>& value) {
 }
 
 template <typename T>
-void equal(const T& got, const T& expected, const char* what, const char* file, int line) {
+void equal(const T& got, const T& expected, const char* what, const std::string& label, const char* file, int line) {
     ++checks;
     if (got == expected) {
         return;
     }
     ++failures;
-    if (failures <= 6) {
-        std::cout << "  " << what << "    (" << file << ":" << line << ")\n"
+    if (failures <= 10) {
+        std::cout << "  " << current_test << " / " << label << "\n"
+                  << "  " << what << "    (" << file << ":" << line << ")\n"
                   << "         got: " << show(got) << "\n"
                   << "    expected: " << show(expected) << "\n";
     }
@@ -59,4 +61,5 @@ inline int finish() {
 
 }  // namespace kit
 
-#define CHECK_EQ(got, expected) kit::equal((got), (expected), #got, __FILE__, __LINE__)
+#define CHECK_EQ(got, expected) kit::equal((got), (expected), #got, "", __FILE__, __LINE__)
+#define CHECK_EQ_L(got, expected, label) kit::equal((got), (expected), #got, (label), __FILE__, __LINE__)
