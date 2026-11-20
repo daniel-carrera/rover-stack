@@ -13,12 +13,14 @@ void Guard::end_press(Time now){
 
 Verdict Guard::admit(Command command, Time now) const {
     // explicit stop
-    if (command.is_stop){
+    // The sticks on the stop never reach the output. 
+    // end_press zeroes them, so NaN in a stop’s x cannot leak into a frame
+    if (!command.press_id.empty() && command.is_stop){
         return Verdict::accepted;
     }
         
-    // stick check: valid numbers, in range?
-    if (!std::isfinite(command.x) || !std::isfinite(command.y)) {
+    // stick check: valid press_id, numbers in range?
+    if (command.press_id.empty() || !std::isfinite(command.x) || !std::isfinite(command.y)) {
         return Verdict::refused_range;
     }
     if (

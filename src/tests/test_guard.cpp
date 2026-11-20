@@ -3,6 +3,7 @@
 #include <string>
 #include <cstddef>
 #include <cmath>
+#include <limits>
 
 #include "src/clock.hpp"
 #include "src/guard.hpp"
@@ -751,6 +752,255 @@ void test_the_hole(){
 // TODO: An empty press id. At startup the current id is empty, so a post with an empty id reads as “the same press” 
 // and can be accepted if centred. The page should never send one, so we refuse it where the bool is refused, in the parser, 
 // and note it in test 8’s comment with the bool.
+void test_range(){
+    Guard guard(std::chrono::milliseconds{300});
+    
+    Command nan_x_command = {
+        .x = std::numeric_limits<double>::quiet_NaN(),
+        .y = 0.0,
+        .press_id = "press_id_0",
+        .is_stop = false
+    };
+    Command nan_y_command = {
+        .x = 0.0,
+        .y = std::numeric_limits<double>::quiet_NaN(),
+        .press_id = "press_id_0",
+        .is_stop = false
+    };
+    Command infinite_x_command = {
+        .x = std::numeric_limits<double>::infinity(),
+        .y = 0.0,
+        .press_id = "press_id_1",
+        .is_stop = false
+    };
+    Command infinite_y_command = {
+        .x = 0.0,
+        .y = std::numeric_limits<double>::infinity(),
+        .press_id = "press_id_1",
+        .is_stop = false
+    };
+    Command infinite_command = {
+        .x = std::numeric_limits<double>::infinity(),
+        .y = std::numeric_limits<double>::infinity(),
+        .press_id = "press_id_1",
+        .is_stop = false
+    };
+    Command command_press_id_2 = {
+        .x = 0.0,
+        .y = 0.0,
+        .press_id = "press_id_2",
+        .is_stop = false
+    };
+    Command x_max_command = {
+        .x = 1.5,
+        .y = 0.0,
+        .press_id = "press_id_2",
+        .is_stop = false
+    };
+    Command y_max_command = {
+        .x = 0.0,
+        .y = 1.5,
+        .press_id = "press_id_2",
+        .is_stop = false
+    };
+    Command max_command = {
+        .x = 2.0,
+        .y = 1.5,
+        .press_id = "press_id_2",
+        .is_stop = false
+    };
+    Command x_min_command = {
+        .x = -10,
+        .y = -0.5,
+        .press_id = "press_id_2",
+        .is_stop = false
+    };
+    Command y_min_command = {
+        .x = 0.8,
+        .y = -1.2,
+        .press_id = "press_id_2",
+        .is_stop = false
+    };
+    Command min_command = {
+        .x = -10,
+        .y = -3,
+        .press_id = "press_id_2",
+        .is_stop = false
+    };
+    Command empty_press_id_command = {
+        .x = 0.0,
+        .y = 0.0,
+        .press_id = "",
+        .is_stop = false
+    };
+    Command empty_press_id_stop_command = {
+        .x = 0.0,
+        .y = 0.0,
+        .press_id = "",
+        .is_stop = true
+    };
+    TickOutput nan_tick_burst_output = {
+        .command = {
+            .x = 0.0,
+            .y = 0.0,
+            .press_id = "",
+            .is_stop = true
+        },
+        .kind = TickOutputType::latched_burst
+    };
+    TickOutput nan_tick_latched_stop_output = {
+        .command = {
+            .x = 0.0,
+            .y = 0.0,
+            .press_id = "",
+            .is_stop = true
+        },
+        .kind = TickOutputType::latched_stop
+    };
+    TickOutput infinite_tick_latched_stop_output = {
+        .command = {
+            .x = 0.0,
+            .y = 0.0,
+            .press_id = "",
+            .is_stop = true
+        },
+        .kind = TickOutputType::latched_stop
+    };
+    TickOutput stick_reset_tick_output = {
+        .command = command_press_id_2,
+        .kind = TickOutputType::regular_command
+    };
+    TickOutput repeat_tick_output = {
+        .command = command_press_id_2,
+        .kind = TickOutputType::repeat_command
+    };
+    TickOutput empty_press_tick_latched_burst_output = {
+        .command = {   
+            .x = 0.0,
+            .y = 0.0,
+            .press_id = "",
+            .is_stop = true
+        },
+        .kind = TickOutputType::latched_burst
+    };
+
+    Time current_time {};
+    Time start_time {};
+
+    // Nan stick tests
+    // Latched start, expected burst at startup with an invalid first command
+    Verdict admit_verdict = guard.admit(nan_x_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "NaN x Stick Command on Startup"));
+    TickOutput tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, nan_tick_burst_output, at_ms(current_time, start_time, "NaN x Stick Command on Startup"));
+    
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(nan_y_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "NaN y Stick Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, nan_tick_latched_stop_output, at_ms(current_time, start_time, "NaN y Stick Command"));
+    
+    // Infinite stick tests
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(infinite_x_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Infinite x Stick Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, infinite_tick_latched_stop_output, at_ms(current_time, start_time, "Infinite x Stick Command"));
+    
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(infinite_y_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Infinite y Stick Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, infinite_tick_latched_stop_output, at_ms(current_time, start_time, "Infinite y Stick Command"));
+    
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(infinite_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Infinite Sticks Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, infinite_tick_latched_stop_output, at_ms(current_time, start_time, "Infinite Sticks Command"));
+    
+    // Sticks reset, command accepted, unlatched
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(command_press_id_2, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "Reset Sticks Command"));
+    tick_output = guard.tick(command_press_id_2, current_time);
+    compare_tick_output(tick_output, stick_reset_tick_output, at_ms(current_time, start_time, "Reset Sticks Command"));
+    
+    // Max and Min stick limits
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(x_max_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Max Limit x Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, repeat_tick_output, at_ms(current_time, start_time, "Max Limit x Command"));
+    
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(y_max_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Max Limit y Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, repeat_tick_output, at_ms(current_time, start_time, "Max Limit y Command"));
+
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(max_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Max Limit Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, repeat_tick_output, at_ms(current_time, start_time, "Max Limit Command"));
+    
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(x_min_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Min Limit x Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, repeat_tick_output, at_ms(current_time, start_time, "Min Limit x Command"));
+    
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(y_min_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Min Limit y Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, repeat_tick_output, at_ms(current_time, start_time, "Min Limit y Command"));
+
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(min_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Min Limit Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, repeat_tick_output, at_ms(current_time, start_time, "Min Limit Command"));
+
+    // Empty press_id
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(empty_press_id_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Empty Press ID Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, repeat_tick_output, at_ms(current_time, start_time, "Empty Press ID Command"));
+    
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(empty_press_id_stop_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Empty Press ID Stop Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, repeat_tick_output, at_ms(current_time, start_time, "Empty Press ID Stop Command"));
+    
+    // Second Guard 
+    Guard second_guard(std::chrono::milliseconds{300});
+    Time second_current_time {};
+    Time second_start_time {};
+
+    // Empty press as first ID, expect latched burst
+    admit_verdict = second_guard.admit(empty_press_id_stop_command, second_current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(second_current_time, second_start_time, "Empty Press ID as Stop Command on Startup"));
+    tick_output = second_guard.tick(std::nullopt, second_current_time);
+    compare_tick_output(tick_output, empty_press_tick_latched_burst_output, at_ms(second_current_time, second_start_time, "Empty Press ID as Stop Command on Startup"));
+
+
+    // Third Guard 
+    Guard third_guard(std::chrono::milliseconds{300});
+    Time third_current_time {};
+    Time third_start_time {};
+
+    // Empty press as first ID, expect latched burst
+    admit_verdict = third_guard.admit(empty_press_id_command, third_current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(third_current_time, third_start_time, "Empty Press ID Command on Startup"));
+    tick_output = third_guard.tick(std::nullopt, third_current_time);
+    compare_tick_output(tick_output, empty_press_tick_latched_burst_output, at_ms(third_current_time, third_start_time, "Empty Press ID Command on Startup"));
+
+}
+
 
 
 int main(){
@@ -762,6 +1012,7 @@ int main(){
     test_handler_tick_race();
     test_reset_after_lapse();
     test_the_hole();
+    test_range();
 
     return kit::finish();
 }
