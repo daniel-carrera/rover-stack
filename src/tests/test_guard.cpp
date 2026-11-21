@@ -1001,6 +1001,196 @@ void test_range(){
 
 }
 
+// 9. Explicit Stop: accepted while latched, while driving, in every state.
+void test_explicit_stop(){
+    Command first_stop_command = {
+        // deflected sticks, still stops so sticks never reach the output
+        .x = 0.7,
+        .y = 0.5,
+        .press_id = "press_id_0",
+        .is_stop = true
+    };
+    Command second_stop_command = {
+        .x = 0.0,
+        .y = 0.0,
+        .press_id = "press_id_1",
+        .is_stop = true
+    };
+    Command reset_sticks_command = {
+        .x = 0.0,
+        .y = 0.0,
+        .press_id = "press_id_1",
+        .is_stop = false
+    };
+    Command drive_command = {
+        .x = 0.7,
+        .y = 0.5,
+        .press_id = "press_id_1",
+        .is_stop = false
+    };
+    Command second_reset_sticks_command = {
+        .x = 0.0,
+        .y = 0.0,
+        .press_id = "press_id_2",
+        .is_stop = false
+    };
+    Command third_stop_command = {
+        .x = 0.0,
+        .y = 0.0,
+        .press_id = "press_id_3",
+        .is_stop = true
+    };
+    TickOutput startup_burst_tick_output = {
+        .command = {
+            .x = 0.0,
+            .y = 0.0,
+            .press_id = "",
+            .is_stop = true
+        },
+        .kind = TickOutputType::latched_burst
+    };
+    TickOutput startup_latched_tick_output = {
+        .command = {
+            .x = 0.0,
+            .y = 0.0,
+            .press_id = "",
+            .is_stop = true
+        },
+        .kind = TickOutputType::latched_stop
+    };
+    TickOutput stop_command_tick_output = {
+        .command = {
+            .x = 0.0,
+            .y = 0.0,
+            .press_id = first_stop_command.press_id,
+            .is_stop = true
+        },
+        .kind = TickOutputType::stop_command
+    };
+    TickOutput regular_command_tick_output = {
+        .command = reset_sticks_command,
+        .kind = TickOutputType::regular_command
+    };
+    TickOutput second_reset_command_tick_output = {
+        .command = second_reset_sticks_command,
+        .kind = TickOutputType::regular_command
+    };
+    TickOutput drive_command_tick_output = {
+        .command = drive_command,
+        .kind = TickOutputType::regular_command
+    };
+    TickOutput second_stop_command_tick_output = {
+        .command = second_stop_command,
+        .kind = TickOutputType::stop_command
+    };
+    TickOutput lapsed_command_tick_output = {
+        .command = {
+            .x = 0.0,
+            .y = 0.0,
+            .press_id = "press_id_2",
+            .is_stop = true
+        },
+        .kind = TickOutputType::lapse
+    };
+    TickOutput latched_command_tick_output = {
+        .command = {
+            .x = 0.0,
+            .y = 0.0,
+            .press_id = "press_id_2",
+            .is_stop = true
+        },
+        .kind = TickOutputType::latched_stop
+    };
+    TickOutput third_stop_command_tick_output = {
+        .command = {
+            .x = 0.0,
+            .y = 0.0,
+            .press_id = "press_id_3",
+            .is_stop = true
+        },
+        .kind = TickOutputType::stop_command
+    };
+    TickOutput latched_burst_tick_output = {
+        .command = third_stop_command,
+        .kind = TickOutputType::latched_burst
+    };
+
+    Guard guard(std::chrono::milliseconds{300});
+    TickOutput tick_output;
+
+    Time current_time {};
+    Time start_time {};
+
+    // Startup latch, no new commands send, empty ticks
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, startup_burst_tick_output, at_ms(current_time, start_time, "Startup Latched Burst"));
+
+    // Latched Stops until t = 75ms, no new commands, empty ticks
+    current_time += std::chrono::milliseconds{25};
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, startup_latched_tick_output, at_ms(current_time, start_time, "Startup Latched Stop"));
+    current_time += std::chrono::milliseconds{25};
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, startup_latched_tick_output, at_ms(current_time, start_time, "Startup Latched Stop"));
+    
+    // Stop command at t = 75
+    current_time += std::chrono::milliseconds{25};
+    Verdict admit_verdict = guard.admit(first_stop_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "Stop Command after Latched Stop"));
+    tick_output = guard.tick(first_stop_command, current_time);
+    compare_tick_output(tick_output, stop_command_tick_output, at_ms(current_time, start_time, "Stop Command after Latched Stop"));
+
+     // Centered command then Drive at t = 100
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(reset_sticks_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "Reset Sticks Command"));
+    tick_output = guard.tick(reset_sticks_command, current_time);
+    compare_tick_output(tick_output, regular_command_tick_output, at_ms(current_time, start_time, "Reset Sticks Command"));
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(drive_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "Drive Command"));
+    tick_output = guard.tick(drive_command, current_time);
+    compare_tick_output(tick_output, drive_command_tick_output, at_ms(current_time, start_time, "Drive Command"));
+    
+    // Stop command at t = 150
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(second_stop_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "Stop Command after Driving"));
+    tick_output = guard.tick(second_stop_command, current_time);
+    compare_tick_output(tick_output, second_stop_command_tick_output, at_ms(current_time, start_time, "Stop Command after Driving"));
+    
+    // Third Stop command at t = 175, with a spent press, still stops (accepted because the stop branch runs before the spent check)
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(first_stop_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "Stop Command with Spent Press, Accepted"));
+    tick_output = guard.tick(first_stop_command, current_time);
+    compare_tick_output(tick_output, stop_command_tick_output, at_ms(current_time, start_time, "Stop Command with Spent Press, Accepted"));
+        
+    // Reset recenter sticks at t = 200, then silence until t = 500 for lapse test (skipping eleven repeats, test 2 covers them)
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(second_reset_sticks_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "Reset Sticks Command after Stop"));
+    tick_output = guard.tick(second_reset_sticks_command, current_time);
+    compare_tick_output(tick_output, second_reset_command_tick_output, at_ms(current_time, start_time, "Reset Sticks Command after Stop"));
+    current_time += std::chrono::milliseconds{300};
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, lapsed_command_tick_output, at_ms(current_time, start_time, "Lapsed Command after Silence"));
+    
+    // t = 525 latched stop, then a stop command at t = 550 with new press id
+    current_time += std::chrono::milliseconds{25};
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, latched_command_tick_output, at_ms(current_time, start_time, "Latched Stop after Lapse"));
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(third_stop_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "Stop Command after Lapse"));
+    tick_output = guard.tick(third_stop_command, current_time);
+    compare_tick_output(tick_output, third_stop_command_tick_output, at_ms(current_time, start_time, "Stop Command after Lapse"));
+
+    // Silence until t = 850, then a latched burst
+    current_time += std::chrono::milliseconds{300};
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, latched_burst_tick_output, at_ms(current_time, start_time, "Latched Burst"));
+}   
 
 
 int main(){
@@ -1013,6 +1203,7 @@ int main(){
     test_reset_after_lapse();
     test_the_hole();
     test_range();
+    test_explicit_stop();
 
     return kit::finish();
 }
