@@ -643,6 +643,8 @@ void test_reset_after_lapse(){
 // 7. The hole: after a lapse, a late burst from the old press that starts centred then deflects must not drive. 
 // The press id is what makes this pass.
 void test_the_hole(){
+    kit::current_test = __func__;
+    
     TickOutput tick_output;
     Guard guard(std::chrono::milliseconds{300});
     Command first_command = {
@@ -753,6 +755,8 @@ void test_the_hole(){
 // and can be accepted if centred. The page should never send one, so we refuse it where the bool is refused, in the parser, 
 // and note it in test 8’s comment with the bool.
 void test_range(){
+    kit::current_test = __func__;
+
     Guard guard(std::chrono::milliseconds{300});
     
     Command nan_x_command = {
@@ -1003,6 +1007,8 @@ void test_range(){
 
 // 9. Explicit Stop: accepted while latched, while driving, in every state.
 void test_explicit_stop(){
+    kit::current_test = __func__;
+
     Command first_stop_command = {
         // deflected sticks, still stops so sticks never reach the output
         .x = 0.7,
@@ -1039,6 +1045,24 @@ void test_explicit_stop(){
         .y = 0.0,
         .press_id = "press_id_3",
         .is_stop = true
+    };
+    Command third_reset_sticks_command = {
+        .x = 0.0,
+        .y = 0.0,
+        .press_id = "press_id_4",
+        .is_stop = false
+    };
+    Command fourth_stop_command = {
+        .x = 0.0,
+        .y = 0.0,
+        .press_id = "press_id_5",
+        .is_stop = true
+    };
+    Command spent_centered_command = {
+        .x = 0.0,
+        .y = 0.0,
+        .press_id = "press_id_4",
+        .is_stop = false
     };
     TickOutput startup_burst_tick_output = {
         .command = {
@@ -1113,6 +1137,23 @@ void test_explicit_stop(){
     TickOutput latched_burst_tick_output = {
         .command = third_stop_command,
         .kind = TickOutputType::latched_burst
+    };
+    TickOutput third_reset_command_tick_output = {
+        .command = third_reset_sticks_command,
+        .kind = TickOutputType::regular_command
+    };
+    TickOutput fourth_stop_command_tick_output = {
+        .command = fourth_stop_command,
+        .kind = TickOutputType::stop_command
+    };
+    TickOutput latched_stop_fourth_command_tick_output = {
+        .command = {
+            .x = 0.0,
+            .y = 0.0,
+            .press_id = "press_id_5",
+            .is_stop = true
+        },
+        .kind = TickOutputType::latched_stop
     };
 
     Guard guard(std::chrono::milliseconds{300});
@@ -1190,6 +1231,23 @@ void test_explicit_stop(){
     current_time += std::chrono::milliseconds{300};
     tick_output = guard.tick(std::nullopt, current_time);
     compare_tick_output(tick_output, latched_burst_tick_output, at_ms(current_time, start_time, "Latched Burst"));
+
+    // Reset sticks at t = 875, then send drive command A, then a stop command B t = 900, then center A t=925, expected refused press
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(third_reset_sticks_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "Reset Sticks Command after Latched Burst"));
+    tick_output = guard.tick(third_reset_sticks_command, current_time);
+    compare_tick_output(tick_output, third_reset_command_tick_output, at_ms(current_time, start_time, "Reset Sticks Command after Latched Burst"));
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(fourth_stop_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "Stop Command after Drive"));
+    tick_output = guard.tick(fourth_stop_command, current_time);
+    compare_tick_output(tick_output, fourth_stop_command_tick_output, at_ms(current_time, start_time, "Stop Command after Drive"));
+    current_time += std::chrono::milliseconds{25};
+    admit_verdict = guard.admit(spent_centered_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_spent_press), at_ms(current_time, start_time, "Refused Spent Press Centered Command"));
+    tick_output = guard.tick(std::nullopt, current_time);
+    compare_tick_output(tick_output, latched_stop_fourth_command_tick_output, at_ms(current_time, start_time, "Latched Stop"));
 }   
 
 
