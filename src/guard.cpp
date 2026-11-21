@@ -1,7 +1,6 @@
 #include "src/clock.hpp"
 #include "src/guard.hpp"
 
-
 void Guard::end_press(Time now){
     latched_ = true;
     last_burst_time_stamp_ = now;
@@ -39,8 +38,9 @@ Verdict Guard::admit(Command command, Time now) const {
     } else if (spent_press_ids_.contains(command.press_id)){
         return Verdict::refused_spent_press;
     // latched and not centered
-    // A same-id command while latched is always caught earlier, stale after a lapse, spent after a stop, 
-    // so by the time the latch is consulted the id is new
+    // any press the guard ever accepted is caught before here, 
+    // stale or spent after a lapse, spent after any stop, its own or another page's, 
+    // so a command that reaches the latch is from a press the guard has never driven on
     } else if (latched_ && (std::abs(command.x) > center_band_ || std::abs(command.y) > center_band_)){
         return Verdict::refused_not_centered;
     // accept
@@ -58,11 +58,16 @@ TickOutput Guard::tick(std::optional<Command> command, Time now){
     if (command.has_value() && admit(*command, now) == Verdict::accepted){
         // apply: drive or stop
         command_time_stamp_ = now;
-        current_command_ = *command;
-        if (current_command_.is_stop){
+        // stop ends the live press no matter who sent it, so put the live id in the set before the stop replaces it
+        if ((*command).is_stop){
+            if (!current_command_.press_id.empty()){
+                spent_press_ids_.insert(current_command_.press_id);
+            }
+            current_command_ = *command;
             end_press(now);
             tick_output.kind = TickOutputType::stop_command;
         } else {
+            current_command_ = *command;
             latched_ = false;
             tick_output.kind = TickOutputType::regular_command;
         }
@@ -71,6 +76,8 @@ TickOutput Guard::tick(std::optional<Command> command, Time now){
     }
     
     // 4 idle branches
+
+    // anything reaching the latch is neither current, nor spent, so it is a press the guard has never accepted
     if (latched_){
         if (!last_burst_time_stamp_.has_value() || now - *last_burst_time_stamp_ >= lease_){
             // burst stop
