@@ -57,17 +57,17 @@ TickOutput Guard::tick(std::optional<Command> command, Time now){
 
     if (command.has_value() && admit(*command, now) == Verdict::accepted){
         // apply: drive or stop
+        // an accepted command from a new press ends the live one, 
+        // so spend the live id before it is replaced
         command_time_stamp_ = now;
-        // stop ends the live press no matter who sent it, so put the live id in the set before the stop replaces it
+        if (!current_command_.press_id.empty() && (*command).press_id != current_command_.press_id){
+            spent_press_ids_.insert(current_command_.press_id);
+        }
+        current_command_ = *command;
         if ((*command).is_stop){
-            if (!current_command_.press_id.empty()){
-                spent_press_ids_.insert(current_command_.press_id);
-            }
-            current_command_ = *command;
             end_press(now);
             tick_output.kind = TickOutputType::stop_command;
         } else {
-            current_command_ = *command;
             latched_ = false;
             tick_output.kind = TickOutputType::regular_command;
         }
@@ -76,8 +76,6 @@ TickOutput Guard::tick(std::optional<Command> command, Time now){
     }
     
     // 4 idle branches
-
-    // anything reaching the latch is neither current, nor spent, so it is a press the guard has never accepted
     if (latched_){
         if (!last_burst_time_stamp_.has_value() || now - *last_burst_time_stamp_ >= lease_){
             // burst stop
