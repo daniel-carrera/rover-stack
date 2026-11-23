@@ -65,7 +65,7 @@ public:
         Duration lease
     ): lease_(lease){}
 
-    // returns true (command accepted) or false (command rejected)
+    // returns Verdict
     // checks:
     //  sticks are in range, if not or invalid number, refused range
     //  stale: now minus timestamp is at or over lease, refused stale.
@@ -103,7 +103,7 @@ private:
     bool latched_ = true;
     
     // inclusive to the value is valid
-    double center_band_ = 0.1; // need to verify this is correct
+    double center_band_ = 0.1; 
     double max_stick_value_ = 1.0;
     double min_stick_value_ = -1.0;
 
