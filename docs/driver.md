@@ -19,7 +19,9 @@ There are two calls.
 | `drive` | Two values. Open: stick values or wheel speeds, decided by what the board reads. | One frame |
 | `stop` | Nothing | One frame |
 
-A call gives back one of two answers: the frame was written, or the write timed out. Every write has a wait limit so a blocked port cannot hold up the core loop.
+A call gives back one of three answers: the frame was written, the write timed out, or the request was refused because the driver is faulted.
+
+Every write has a wait limit of 10 ms, so a blocked port cannot hold up the core loop. The number is provisional until bench check 7. When a write times out, the rest of that tick's writes are skipped.
 
 A call does not say whether the board took the frame. A serial write can succeed with nobody listening. Whether the board answers a motion command at all is unmeasured (bench check 1), and the design does not depend on it. The driver learns that the board is alive from the feedback.
 
@@ -50,14 +52,19 @@ The lease is checked on a tick, so silence is noticed within 190 ms. The 15 ms i
 
 ## Faults
 
-The driver raises a fault in two cases:
+The driver starts faulted. It becomes faulted again in three cases:
 
 1. A write timed out.
-2. No feedback has arrived for 165 ms.
+2. The port answered with an error, for example because the cable came out.
+3. No feedback has arrived for 165 ms.
 
-On a fault the core loop stops passing drive requests, sends stops, and tells the operator that the motor board is lost.
+While faulted the driver refuses a `drive` and writes nothing. A `stop` is always written. The core loop also stops passing drive requests and tells the operator that the motor board is lost.
 
-A fault latches. It clears only when the operator presses Re-arm, and Re-arm is accepted only after several feedback messages in a row have arrived on time. The count is open.
+A fault latches. It clears only when the operator presses Re-arm, and Re-arm is accepted only after 20 feedback messages in a row have arrived on time, which is about one second. On time means no gap longer than the 165 ms lease. A late message restarts the count.
+
+The same rule holds at power-on, so the first Re-arm is the arming step.
+
+There is no give-up state. The driver keeps listening for as long as it takes. If the port itself disappears, the driver tries to reopen it while it is faulted.
 
 Checking whether the wheels obey the commands is left out for now. Wheels ramp, slip and stall, so that rule needs a tolerance and a time window of its own.
 
@@ -83,14 +90,28 @@ The last row is the known weakness. While the Pi cannot write, the board's own t
 
 The model has been checked once: it predicted 8 cm at 0.18 m/s and 7 cm was measured on the stand.
 
+## Tests
+
+The driver takes its clock and its port from outside. Every test runs on made-up time with a fake port that records what was written and can be told to block, fail or go silent. A test that needs a healthy driver arms it first: 20 on-time messages, then Re-arm.
+
+1. `test_healthy_command`: a drive on every tick for 10 s. The port holds 400 frames and there is no fault.
+2. `test_healthy_stop_command`: drives and stops interleaved on every tick for 10 s. One frame per call and no fault.
+3. `test_timeout`: healthy ticks, then a burst of three stops whose first write times out. One write is attempted and the fault is raised. The next tick still sends a stop.
+4. `test_feedback_lease`: with the last message 164 ms old there is no fault. At 165 ms there is.
+5. `test_latching`: a fault, then feedback returns on time. The driver stays faulted.
+6. `test_re_arm`: after a fault a drive is refused and nothing is written. Re-arm is refused at 19 on-time messages and accepted at 20.
+7. `test_re_arm_restart`: a late message during the count sets it back to zero.
+8. `test_port_disappear`: the port answers every call with an error and the fault is raised at once. The port opens again, and Re-arm is accepted after 20 on-time messages.
+9. `test_feedback_pieces`: a message split across two reads counts once. Bytes that are not a message are skipped and do not renew the lease.
+10. `test_startup`: before any feedback a drive is refused. Re-arm is refused before 20 on-time messages.
+11. `test_stop_while_faulted`: a stop is written while the driver is faulted.
+
+The exact bytes of a frame wait for the board's format.
+
 ## Open
 
 - `drive` takes stick values or wheel speeds.
 - Which of the board's messages the driver reads, and their fields.
-- The wait limit on a write.
-- How many on-time feedback messages count as "back".
-- What state the driver is in when it gives up waiting for the board.
-- The test list, written before any code.
 
 ## Bench checks
 
