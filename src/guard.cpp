@@ -7,19 +7,21 @@ void Guard::end_press(Time now){
     current_command_.x = 0.0;
     current_command_.y = 0.0;
     current_command_.is_stop = true;
-    spent_press_ids_.insert(current_command_.press_id);
+    if (current_command_.press_id.has_value()){
+        spent_press_ids_.insert(*current_command_.press_id);
+    }
 }
 
 Verdict Guard::admit(Command command, Time now) const {
     // explicit stop
     // The sticks on the stop never reach the output. 
     // end_press zeroes them, so NaN in a stop’s x cannot leak into a frame
-    if (!command.press_id.empty() && command.is_stop){
+    if (!command.press_id->empty() && command.is_stop){
         return Verdict::accepted;
     }
         
     // stick check: valid press_id, numbers in range?
-    if (command.press_id.empty() || !std::isfinite(command.x) || !std::isfinite(command.y)) {
+    if (!command.press_id.has_value() || command.press_id->empty() || !std::isfinite(command.x) || !std::isfinite(command.y)) {
         return Verdict::refused_range;
     }
     if (
@@ -32,10 +34,10 @@ Verdict Guard::admit(Command command, Time now) const {
     }
 
     // stale check
-    if (command.press_id == current_command_.press_id && now - command_time_stamp_ >= lease_){
+    if ((*command.press_id) == (*current_command_.press_id) && now - command_time_stamp_ >= lease_){
         return Verdict::refused_stale;
     // spent press id
-    } else if (spent_press_ids_.contains(command.press_id)){
+    } else if (spent_press_ids_.contains((*command.press_id))){
         return Verdict::refused_spent_press;
     // latched and not centered
     // any press the guard ever accepted is caught before here, 
@@ -60,8 +62,8 @@ TickOutput Guard::tick(std::optional<Command> command, Time now){
         // an accepted command from a new press ends the live one, 
         // so spend the live id before it is replaced
         command_time_stamp_ = now;
-        if (!current_command_.press_id.empty() && (*command).press_id != current_command_.press_id){
-            spent_press_ids_.insert(current_command_.press_id);
+        if (current_command_.press_id.has_value() && command->press_id != current_command_.press_id){
+            spent_press_ids_.insert(*current_command_.press_id);
         }
         current_command_ = *command;
         if ((*command).is_stop){

@@ -9,6 +9,7 @@
 #include "src/guard.hpp"
 #include "src/tests/check.hpp"
 
+constexpr std::uint64_t PAGE_SENDER_START = 1;
 
 bool check_double_equal(const double test, const double correct, const std::string& label) {
     double abs_diff = std::abs(test - correct);
@@ -22,6 +23,16 @@ bool check_double_equal(const double test, const double correct, const std::stri
 }
 
 void compare_command(Command test, Command expected, const std::string& label) {
+    // bool same_start = test.sender_start == expected.sender_start;
+    // CHECK_EQ_L(same_start, true, label);
+    // if (!same_start){
+    //     std::cout << "Invalid sender_start value";
+    // }
+    // bool same_counter = test.sender_counter == expected.sender_counter;
+    // CHECK_EQ_L(same_counter, true, label);
+    // if (!same_counter) {
+    //     std::cout << "Invalid sender_counter value";
+    // }
     if (!check_double_equal(test.x, expected.x, label)){
         std::cout << "Invalid x value found for Command\n";
     }
@@ -47,21 +58,30 @@ std::string at_ms(Time now, Time start, const std::string& what){
 
 // Factory Helpers for the four shapes
 // Creates a drive command, is_stop false, x,y,id are passed in
+std::uint64_t get_sender_counter(){
+    static std::uint64_t counter = 0;
+    return ++counter;
+}
+
 Command drive(const std::string& id, double x, double y){
     return {
         .x = x,
         .y = y,
         .press_id = id,
-        .is_stop = false
+        .is_stop = false,
+        .sender_start = PAGE_SENDER_START,
+        .sender_counter = get_sender_counter()
     };
 }
 // Creates a stop command, stick zeroes, is_stop is true, same id
-Command stop(const std::string& id){
+Command stop(const std::optional<std::string>& id){
     return {
         .x = 0.0,
         .y = 0.0,
         .press_id = id,
-        .is_stop = true
+        .is_stop = true,
+        .sender_start = PAGE_SENDER_START,
+        .sender_counter = get_sender_counter()
     };
 }
 // Covers echo cases like regular_command and repeat_command
@@ -74,7 +94,7 @@ TickOutput expect(TickOutputType kind, const Command& command){
 }
 // For ended cases: stop_command, lapse, latched_stop, latched_burst
 // The output command is always zeros with the current id, is_stop is true
-TickOutput ended(TickOutputType kind, const std::string& id){
+TickOutput ended(TickOutputType kind, const std::optional<std::string>& id){
     return expect(kind, stop(id));
 }
 
@@ -83,69 +103,49 @@ TickOutput ended(TickOutputType kind, const std::string& id){
 void test_healthy_command(Duration lease){
     kit::current_test = __func__;
 
-    Command command {
-        .x = 0,
-        .y = 0,
-        .press_id = "press_id_0",
-        .is_stop = false
-    };
-
-    TickOutput expected_tick_output {
-        .command = {
-            .x = 0,
-            .y = 0,
-            .press_id = "press_id_0",
-            .is_stop = false
-        },
-        .kind = TickOutputType::regular_command 
-    }; 
+    const std::string p0 = "press_id_0";
+    Command p0_command;
 
     Guard guard(lease);
-
     Time start_time = Time{};
     Time current_time = Time{};
     while (current_time - start_time < std::chrono::milliseconds{10000}){
 
+        // deflect commands sent after 50ms
         if (current_time - start_time >= std::chrono::milliseconds{50}){
-            command.x = 0.5;
-            command.y = 0.5;
-            expected_tick_output.command.x = 0.5;
-            expected_tick_output.command.y = 0.5;
-            expected_tick_output.kind = TickOutputType::regular_command;
+            p0_command = drive(p0, 0.5, 0.5);
+        } else {
+            p0_command = drive(p0, 0, 0);
         }
 
-        Verdict admit_verdict = guard.admit(command, current_time);
-        CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "Command waiting."));
+        // new tick
+        Verdict admit_verdict = guard.admit(p0_command, current_time);
+        CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "p0 New Command"));
 
-        TickOutput tick_output = guard.tick(command, current_time);
-        compare_tick_output(tick_output, expected_tick_output, at_ms(current_time, start_time, "Command waiting."));
+        TickOutput tick_output = guard.tick(p0_command, current_time);
+        compare_tick_output(tick_output, expect(TickOutputType::regular_command, p0_command), at_ms(current_time, start_time, "p0 New Command"));
         current_time += std::chrono::milliseconds{25};
 
-        expected_tick_output.kind = TickOutputType::repeat_command;
+        // no command, empty tick
         tick_output = guard.tick(std::nullopt, current_time);
-        compare_tick_output(tick_output, expected_tick_output, at_ms(current_time, start_time, "Command repeat."));
+        compare_tick_output(tick_output, expect(TickOutputType::repeat_command, p0_command), at_ms(current_time, start_time, "p0 Repeat Command"));
         current_time += std::chrono::milliseconds{25};
     }
 
     return;
 }
 
+
 // 2. Silence: last command at t
 void test_silence(Duration lease, Duration tick_period){
     kit::current_test = __func__;
+    const std::string p0 = "press_id_0";
 
     // when the tick processes a command and it produces a stop
     // the returned command in TickOutput will carry the press id 
     // of the last command it saw
-    Command command {
-        .x = 0,
-        .y = 0,
-        .press_id = "press_id_0",
-        .is_stop = false
-    };
-
+    Command p0_command = drive(p0, 0, 0);
     Guard guard(lease);
-
     Time start_time = Time{};
     Time current_time = Time{};
 
@@ -168,90 +168,42 @@ void test_silence(Duration lease, Duration tick_period){
         
         // we only ever recieve one command at t = 0 so we only admit it once in the loop
         if (time_diff == std::chrono::milliseconds{0}){
-            TickOutput regular_tick_output {
-                .command = {
-                    .x = 0,
-                    .y = 0,
-                    .press_id = "press_id_0",
-                    .is_stop = false
-                },
-                .kind = TickOutputType::regular_command 
-            }; 
-
-            Verdict admit_verdict = guard.admit(command, current_time);
-            CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "First Command waiting"));
-
-            TickOutput tick_output = guard.tick(command, current_time);
-            compare_tick_output(tick_output, regular_tick_output, at_ms(current_time, start_time, "First Command waiting")); 
-            
+            Verdict admit_verdict = guard.admit(p0_command, current_time);
+            CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "p0 First Command"));
+            TickOutput tick_output = guard.tick(p0_command, current_time);
+            compare_tick_output(tick_output, expect(TickOutputType::regular_command, p0_command), at_ms(current_time, start_time, "p0 First Command")); 
             current_time += tick_period;
             continue;
         }
         
         // No command between t = start and t < lapse_time
         if (time_diff > std::chrono::milliseconds{0} && time_diff < lapse_time) {
-            TickOutput repeat_tick_output {
-                .command = {
-                    .x = 0,
-                    .y = 0,
-                    .press_id = "press_id_0",
-                    .is_stop = false
-                },
-                .kind = TickOutputType::repeat_command 
-            }; 
             TickOutput tick_output = guard.tick(std::nullopt, current_time);
-            compare_tick_output(tick_output, repeat_tick_output, at_ms(current_time, start_time, "Repeat Command"));
+            compare_tick_output(tick_output, expect(TickOutputType::repeat_command, p0_command), at_ms(current_time, start_time, "p0 Repeat Command"));
             current_time += tick_period;
             continue;
         }
         
         // if time is lapsed, check expected burst
         if (time_diff == lapse_time){
-            TickOutput lapse_tick_output {
-                .command = {
-                    .x = 0,
-                    .y = 0,
-                    .press_id = "press_id_0",
-                    .is_stop = true
-                },
-                .kind = TickOutputType::lapse 
-            }; 
             TickOutput tick_output = guard.tick(std::nullopt, current_time);
-            compare_tick_output(tick_output, lapse_tick_output, at_ms(current_time, start_time, "Lapsed Command"));
+            compare_tick_output(tick_output, ended(TickOutputType::lapse, p0), at_ms(current_time, start_time, "p0 Lapsed Command"));
             current_time += tick_period;
             continue;
         }
         
         // if time is after lapsed, check expected latched stop
         if (time_diff > lapse_time && time_diff < lapse_time_twice) {
-            TickOutput latched_stop_tick_output {
-                .command = {
-                    .x = 0,
-                    .y = 0,
-                    .press_id = "press_id_0",
-                    .is_stop = true
-                },
-                .kind = TickOutputType::latched_stop     
-            };
             TickOutput tick_output = guard.tick(std::nullopt, current_time);
-            compare_tick_output(tick_output, latched_stop_tick_output, at_ms(current_time, start_time, "Latched Stop Command"));
+            compare_tick_output(tick_output, ended(TickOutputType::latched_stop, p0), at_ms(current_time, start_time, "p0 Latched Stop Command"));
             current_time += tick_period;
             continue;
         }
 
         // if time is lapsed 2x, check expected burst
         if (time_diff == lapse_time_twice){
-            TickOutput latched_burst_tick_output {
-                .command = {
-                    .x = 0,
-                    .y = 0,
-                    .press_id = "press_id_0",
-                    .is_stop = true
-                },
-                .kind = TickOutputType::latched_burst     
-            };
             TickOutput tick_output = guard.tick(std::nullopt, current_time);
-            compare_tick_output(tick_output, latched_burst_tick_output, at_ms(current_time, start_time, "Latched Burst Command"));
+            compare_tick_output(tick_output, ended(TickOutputType::latched_burst, p0), at_ms(current_time, start_time, "p0 Latched Burst Command"));
             current_time += tick_period;
             continue;
         }
@@ -263,15 +215,10 @@ void test_silence(Duration lease, Duration tick_period){
 // Posts every 50ms, lease is 300ms, tick period is 25ms
 void test_loss_tolerance(){
     kit::current_test = __func__;
+    const std::string p0 = "press_id_0";
 
-    Command command {
-        .x = 0,
-        .y = 0,
-        .press_id = "press_id_0",
-        .is_stop = false
-    };
+    Command p0_command = drive(p0, 0, 0);
     Guard guard(std::chrono::milliseconds{300});
-
     Time start_time = Time{};
     Time current_time = Time{};
 
@@ -286,74 +233,37 @@ void test_loss_tolerance(){
 
         // Command recieved after lapse
         if (time_diff > std::chrono::milliseconds{300}){
-            TickOutput latched_stop_tick_output = {
-                .command = {
-                    .x = 0,
-                    .y = 0,
-                    .press_id = "press_id_0",
-                    .is_stop = true
-                },
-                .kind = TickOutputType::latched_stop
-            };
-            Verdict admit_verdict = guard.admit(command, current_time);
+            Verdict admit_verdict = guard.admit(drive(p0, 0, 0), current_time);
             CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_stale), at_ms(current_time, start_time, "Latched Stop Command"));
             TickOutput tick_output = guard.tick(std::nullopt, current_time);
-            compare_tick_output(tick_output, latched_stop_tick_output, "Latched Stop Command");
+            compare_tick_output(tick_output, ended(TickOutputType::latched_stop, p0), "p0 Latched Stop Command");
             current_time += std::chrono::milliseconds{25};
             continue;
         }
 
         // Command recieved at lapse time
         if (time_diff == std::chrono::milliseconds{300}){
-            TickOutput refused_tick_output = {
-                .command = {
-                    .x = 0,
-                    .y = 0,
-                    .press_id = "press_id_0",
-                    .is_stop = true
-                },
-                .kind = TickOutputType::lapse
-            };
-            Verdict admit_verdict = guard.admit(command, current_time);
-            CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_stale), at_ms(current_time, start_time, "Lapsed Command"));
+            Verdict admit_verdict = guard.admit(drive(p0, 0, 0), current_time);
+            CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_stale), at_ms(current_time, start_time, "p0 Lapsed Command"));
             TickOutput tick_output = guard.tick(std::nullopt, current_time);
-            compare_tick_output(tick_output, refused_tick_output, "Lapsed Command");
+            compare_tick_output(tick_output, ended(TickOutputType::lapse, p0), "p0 Lapsed Command");
             current_time += std::chrono::milliseconds{25};
             continue;
         }
 
         // First command at t = 0
         if (time_diff == std::chrono::milliseconds{0}){
-            TickOutput regular_tick_output = {
-                .command = {
-                    .x = 0,
-                    .y = 0,
-                    .press_id = "press_id_0",
-                    .is_stop = false
-                },
-                .kind = TickOutputType::regular_command
-            };
-            Verdict admit_verdict = guard.admit(command, current_time);
-            CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "First Command"));
-            TickOutput tick_output = guard.tick(command, current_time);
-            compare_tick_output(tick_output, regular_tick_output, "First Command");
+            Verdict admit_verdict = guard.admit(p0_command, current_time);
+            CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "p0 First Command"));
+            TickOutput tick_output = guard.tick(p0_command, current_time);
+            compare_tick_output(tick_output, expect(TickOutputType::regular_command, p0_command), "p0 First Command");
             current_time += std::chrono::milliseconds{25};
             continue;
         }
 
-        // No new command, repeat previous
-        TickOutput repeat_tick_output = {
-            .command = {
-                .x = 0,
-                .y = 0,
-                .press_id = "press_id_0",
-                .is_stop = false
-            },
-            .kind = TickOutputType::repeat_command
-        };
         // 1 tick without an arrival
         TickOutput tick_output = guard.tick(std::nullopt, current_time);
-        compare_tick_output(tick_output, repeat_tick_output, "Repeat Command");
+        compare_tick_output(tick_output, expect(TickOutputType::repeat_command, p0_command), "p0 Repeat Command");
         current_time += std::chrono::milliseconds{25};
         continue;
     }
@@ -367,34 +277,17 @@ void test_loss_tolerance(){
         Duration time_diff = current_time - start_time;
 
         if (time_diff == std::chrono::milliseconds{0} || time_diff == std::chrono::milliseconds{250}){
-            TickOutput regular_tick_output = {
-                .command = {
-                    .x = 0,
-                    .y = 0,
-                    .press_id = "press_id_0",
-                    .is_stop = false
-                },
-                .kind = TickOutputType::regular_command
-            };
-            Verdict admit_verdict = guard.admit(command, current_time);
-            CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "Command Waiting"));
-            TickOutput tick_output = guard.tick(command, current_time);
-            compare_tick_output(tick_output, regular_tick_output, "Command Waiting");
+            p0_command = drive(p0, 0, 0);
+            Verdict admit_verdict = guard.admit(p0_command, current_time);
+            CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "p0 New Command"));
+            TickOutput tick_output = guard.tick(p0_command, current_time);
+            compare_tick_output(tick_output, expect(TickOutputType::regular_command, p0_command), "p0 New Command");
             current_time += std::chrono::milliseconds{25};
             continue;
         }
-        TickOutput repeat_tick_output = {
-            .command = {
-                .x = 0,
-                .y = 0,
-                .press_id = "press_id_0",
-                .is_stop = false
-            },
-            .kind = TickOutputType::repeat_command
-        };
         // 1 tick of the same repeated command
         TickOutput tick_output = guard.tick(std::nullopt, current_time);
-        compare_tick_output(tick_output, repeat_tick_output, "Repeat Command");
+        compare_tick_output(tick_output, expect(TickOutputType::repeat_command, p0_command), "p0 Repeat Command");
         current_time += std::chrono::milliseconds{25};
         continue;
     }
@@ -404,13 +297,9 @@ void test_loss_tolerance(){
 // Lease is 300ms, posts every 50ms, tick period is 25ms
 void test_late_command(){
     kit::current_test = __func__;
+    const std::string p0 = "press_id_0";
 
-    Command command {
-        .x = 0,
-        .y = 0,
-        .press_id = "press_id_0",
-        .is_stop = false
-    };
+    Command p0_command = drive(p0, 0, 0);
     Guard guard(std::chrono::milliseconds{300});
     Time start_time = Time{};
     Time current_time = Time{};
@@ -422,76 +311,41 @@ void test_late_command(){
     while (current_time - start_time <= std::chrono::milliseconds{500}){
         Duration time_diff = current_time - start_time;
         
-        // Latched stops past t = 300
+        // Latched stops past t > 300
         if (time_diff > std::chrono::milliseconds{300}){
-            TickOutput latched_stop_tick_output = {
-                .command = {
-                    .x = 0,
-                    .y = 0,
-                    .press_id = "press_id_0",
-                    .is_stop = true
-                },
-                .kind = TickOutputType::latched_stop
-            };
             // New command at t = 400, refused stale
             if (time_diff == std::chrono::milliseconds{400}){
-                Verdict admit_verdict = guard.admit(command, current_time);
-                CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_stale), at_ms(current_time, start_time, "Stale Command Waiting"));
+                Verdict admit_verdict = guard.admit(drive(p0, 0, 0), current_time);
+                CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_stale), at_ms(current_time, start_time, "p0 New Stale Command"));
             }
             TickOutput tick_output = guard.tick(std::nullopt, current_time);
-            compare_tick_output(tick_output, latched_stop_tick_output, at_ms(current_time, start_time, "Latched Stop"));
+            compare_tick_output(tick_output, expect(TickOutputType::latched_stop, p0_command), at_ms(current_time, start_time, "p0 Latched Stop"));
             current_time += std::chrono::milliseconds{25};
             continue;
         }
 
         // t = 300 lapsed, no command recieved
         if (time_diff == std::chrono::milliseconds{300}){
-            TickOutput lapsed_tick_output = {
-                .command = {
-                    .x = 0,
-                    .y = 0,
-                    .press_id = "press_id_0",
-                    .is_stop = true
-                },
-                .kind = TickOutputType::lapse
-            };
             TickOutput tick_output = guard.tick(std::nullopt, current_time);
-            compare_tick_output(tick_output, lapsed_tick_output, at_ms(current_time, start_time, "Lapsed Command"));
+            p0_command = stop(p0);
+            compare_tick_output(tick_output, ended(TickOutputType::lapse, p0), at_ms(current_time, start_time, "p0 Lapsed Command"));
             current_time += std::chrono::milliseconds{25};
             continue;
         }
 
         // First Command Accepted at t = 0
         if (time_diff == std::chrono::milliseconds{0}){
-            TickOutput regular_tick_output = {
-                .command = {
-                    .x = 0,
-                    .y = 0,
-                    .press_id = "press_id_0",
-                    .is_stop = false
-                },
-                .kind = TickOutputType::regular_command
-            };
-            Verdict admit_verdict = guard.admit(command, current_time);
-            CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "First Waiting Command"));
-            TickOutput tick_output = guard.tick(command, current_time);
-            compare_tick_output(tick_output, regular_tick_output, "First Waiting Command");
+            Verdict admit_verdict = guard.admit(p0_command, current_time);
+            CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "p0 First Command"));
+            TickOutput tick_output = guard.tick(p0_command, current_time);
+            compare_tick_output(tick_output, expect(TickOutputType::regular_command, p0_command), "p0 First Command");
             current_time += std::chrono::milliseconds{25};
             continue;
         }
 
-        TickOutput repeat_tick_output = {
-            .command = {
-                .x = 0,
-                .y = 0,
-                .press_id = "press_id_0",
-                .is_stop = false
-            },
-            .kind = TickOutputType::repeat_command
-        };
         // 1 tick without an arrival
         TickOutput tick_output = guard.tick(std::nullopt, current_time);
-        compare_tick_output(tick_output, repeat_tick_output, "Repeat Command");
+        compare_tick_output(tick_output, expect(TickOutputType::repeat_command, p0_command), "Repeat Command");
         current_time += std::chrono::milliseconds{25};
         continue;
     }
@@ -504,69 +358,33 @@ void test_late_command(){
 // then sending the same second command at t=325, confirming we get a latched stop
 void test_handler_tick_race(){
     kit::current_test = __func__;
-    
+    const std::string p0 = "press_id_0";
     TickOutput tick_output;
     Guard guard(std::chrono::milliseconds{300});
-    Command first_command = {
-        .x = 0.0,
-        .y = 0.0,
-        .press_id = "press_id_0",
-        .is_stop = false
-    };
-    Command second_command = {
-        .x = 0.5,
-        .y = 0.5,
-        .press_id = "press_id_0",
-        .is_stop = false
-    };
-    TickOutput regular_tick_output = {
-        .command = {
-            .x = 0.0,
-            .y = 0.0,
-            .press_id = "press_id_0",
-            .is_stop = false
-        },
-        .kind = TickOutputType::regular_command
-    };
-    TickOutput lapsed_tick_output = {
-        .command = {
-            .x = 0.0,
-            .y = 0.0,
-            .press_id = "press_id_0",
-            .is_stop = true
-        },
-        .kind = TickOutputType::lapse
-    };
-    TickOutput latched_stop_tick_output = {
-        .command = {
-            .x = 0.0,
-            .y = 0.0,
-            .press_id = "press_id_0",
-            .is_stop = true
-        },
-        .kind = TickOutputType::latched_stop
-    };
+    Command p0_command = drive(p0, 0, 0);
+    Command p0_drive_command = drive(p0, 0.5, 0.5);
+    Command p0_stale_command = drive(p0, 0.5, 0.5);
 
     Time current_time {};
     Time start_time {};
-    Verdict admit_verdict = guard.admit(first_command, current_time);
-    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "First Waiting Command"));
-    tick_output = guard.tick(first_command, current_time);
-    compare_tick_output(tick_output, regular_tick_output, at_ms(current_time, start_time, "First Waiting Command"));
+    Verdict admit_verdict = guard.admit(p0_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted), at_ms(current_time, start_time, "p0 First Command"));
+    tick_output = guard.tick(p0_command, current_time);
+    compare_tick_output(tick_output, expect(TickOutputType::regular_command, p0_command), at_ms(current_time, start_time, "p0 First Command"));
 
     current_time += std::chrono::milliseconds{299};
-    admit_verdict = guard.admit(second_command, current_time);
-    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted),  at_ms(current_time, start_time, "Second Waiting Command"));
-
+    admit_verdict = guard.admit(p0_drive_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::accepted),  at_ms(current_time, start_time, "p0 Drive Command"));
     current_time += std::chrono::milliseconds{1};
-    tick_output = guard.tick(second_command, current_time);
-    compare_tick_output(tick_output, lapsed_tick_output, at_ms(current_time, start_time, "Lapsed Waiting Command"));
+    tick_output = guard.tick(p0_drive_command, current_time);
+    p0_drive_command = stop(p0);
+    compare_tick_output(tick_output, ended(TickOutputType::lapse, p0), at_ms(current_time, start_time, "p0 Drive Lapsed Command"));
 
     current_time += std::chrono::milliseconds{25};
-    admit_verdict = guard.admit(second_command, current_time);
-    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_stale), "Lapsed Waiting Command");
+    admit_verdict = guard.admit(p0_stale_command, current_time);
+    CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_stale), "p0 Stale Command");
     tick_output = guard.tick(std::nullopt, current_time);
-    compare_tick_output(tick_output, latched_stop_tick_output, at_ms(current_time, start_time, "Latched Stop Command"));
+    compare_tick_output(tick_output, expect(TickOutputType::latched_stop, p0_drive_command), at_ms(current_time, start_time, "Latched Stop Command"));
 
     return;
 }
@@ -578,108 +396,62 @@ void test_handler_tick_race(){
 // second branch sends a non-centered command at t=350 refused latched stop
 void test_reset_after_lapse(){
     kit::current_test = __func__;
+    const std::string p0 = "press_id_0";
+    const std::string p1 = "press_id_1";
 
+    Command p0_command = drive(p0, 0, 0);
+    Command p0_drive_command = drive(p0, 0.5, 0.5);
+    Command p1_command = drive(p1, 0, 0);
     TickOutput tick_output;
     Guard guard(std::chrono::milliseconds{300});
-    Command first_command = {
-        .x = 0.0,
-        .y = 0.0,
-        .press_id = "press_id_0",
-        .is_stop = false
-    };
-    Command second_command = {
-        .x = 0.5,
-        .y = 0.5,
-        .press_id = "press_id_0",
-        .is_stop = false
-    };
-    Command third_command = {
-        .x = 0.0,
-        .y = 0.0,
-        .press_id = "press_id_1",
-        .is_stop = false
-    };
-    Command fourth_command = {
-        .x = 0.5,
-        .y = 0.0,
-        .press_id = "press_id_1",
-        .is_stop = false
-    };
-    TickOutput regular_tick_output = {
-        .command = first_command,
-        .kind = TickOutputType::regular_command
-    };
-    TickOutput lapsed_tick_output = {
-        .command = {
-            .x = 0.0,
-            .y = 0.0,
-            .press_id = "press_id_0",
-            .is_stop = true
-        },
-        .kind = TickOutputType::lapse
-    };
-    TickOutput latched_tick_output = {
-        .command = {
-            .x = 0.0,
-            .y = 0.0,
-            .press_id = "press_id_0",
-            .is_stop = true
-        },
-        .kind = TickOutputType::latched_stop
-    };
-    TickOutput reset_tick_output = {
-        .command = {
-            .x = 0.0,
-            .y = 0.0,
-            .press_id = "press_id_1",
-            .is_stop = false
-        },
-        .kind = TickOutputType::regular_command
-    };
 
     // first branch, regular, stale, then reset accepted
     Time first_current_time{};
     Time first_start_time{};
 
-    Verdict guard_verdict = guard.admit(first_command, first_current_time);
-    CHECK_EQ_L(static_cast<int>(guard_verdict), static_cast<int>(Verdict::accepted), at_ms(first_current_time, first_start_time, "First Waiting Command"));
-    tick_output = guard.tick(first_command, first_current_time);
-    compare_tick_output(tick_output, regular_tick_output, at_ms(first_current_time, first_start_time, "First Waiting Command"));
+    Verdict guard_verdict = guard.admit(p0_command, first_current_time);
+    CHECK_EQ_L(static_cast<int>(guard_verdict), static_cast<int>(Verdict::accepted), at_ms(first_current_time, first_start_time, "p0 First Command"));
+    tick_output = guard.tick(p0_command, first_current_time);
+    compare_tick_output(tick_output, expect(TickOutputType::regular_command, p0_command), at_ms(first_current_time, first_start_time, "p0 First Command"));
 
     first_current_time += std::chrono::milliseconds{300};
-    guard_verdict = guard.admit(second_command, first_current_time);
-    CHECK_EQ_L(static_cast<int>(guard_verdict), static_cast<int>(Verdict::refused_stale), at_ms(first_current_time, first_start_time, "Lapsed Command"));
+    guard_verdict = guard.admit(p0_drive_command, first_current_time);
+    CHECK_EQ_L(static_cast<int>(guard_verdict), static_cast<int>(Verdict::refused_stale), at_ms(first_current_time, first_start_time, "p0 Lapsed Command"));
     tick_output = guard.tick(std::nullopt, first_current_time);
-    compare_tick_output(tick_output, lapsed_tick_output, at_ms(first_current_time, first_start_time, "Lapsed Command"));
+    p0_drive_command = stop(p0);
+    compare_tick_output(tick_output, ended(TickOutputType::lapse, p0), at_ms(first_current_time, first_start_time, "p0 Lapsed Command"));
 
     first_current_time += std::chrono::milliseconds{25};
-    guard_verdict = guard.admit(third_command, first_current_time);
-    CHECK_EQ_L(static_cast<int>(guard_verdict), static_cast<int>(Verdict::accepted), at_ms(first_current_time, first_start_time, "Stick Reset Waiting Command"));
-    tick_output = guard.tick(third_command, first_current_time);
-    compare_tick_output(tick_output, reset_tick_output, at_ms(first_current_time, first_start_time, "Stick Reset Waiting Command"));
+    guard_verdict = guard.admit(p1_command, first_current_time);
+    CHECK_EQ_L(static_cast<int>(guard_verdict), static_cast<int>(Verdict::accepted), at_ms(first_current_time, first_start_time, "p1 Stick Reset Command"));
+    tick_output = guard.tick(p1_command, first_current_time);
+    compare_tick_output(tick_output, expect(TickOutputType::regular_command, p1_command), at_ms(first_current_time, first_start_time, "p1 Stick Reset Command"));
 
-    
     // second branch, regular, stale, then reset refused
+    p0_command = drive(p0, 0, 0);
+    p0_drive_command = drive(p0, 0.5, 0.5);
+    Command p1_drive_command = drive(p1, 0.5, 0.5);
     Time second_current_time{};
     Time second_start_time{};
 
     Guard second_guard(std::chrono::milliseconds{300});
-    guard_verdict = second_guard.admit(first_command, second_current_time);
-    CHECK_EQ_L(static_cast<int>(guard_verdict), static_cast<int>(Verdict::accepted), at_ms(second_current_time, second_start_time, "First Waiting Command"));
-    tick_output = second_guard.tick(first_command, second_current_time);
-    compare_tick_output(tick_output, regular_tick_output, at_ms(second_current_time, second_start_time, "First Waiting Command"));
+    guard_verdict = second_guard.admit(p0_command, second_current_time);
+    CHECK_EQ_L(static_cast<int>(guard_verdict), static_cast<int>(Verdict::accepted), at_ms(second_current_time, second_start_time, "p0 First Command"));
+    tick_output = second_guard.tick(p0_command, second_current_time);
+    compare_tick_output(tick_output, expect(TickOutputType::regular_command, p0_command), at_ms(second_current_time, second_start_time, "p0 First Command"));
 
     second_current_time += std::chrono::milliseconds{300};
-    guard_verdict = second_guard.admit(second_command, second_current_time);
-    CHECK_EQ_L(static_cast<int>(guard_verdict), static_cast<int>(Verdict::refused_stale), at_ms(second_current_time, second_start_time, "Lapsed Waiting Command"));
+    guard_verdict = second_guard.admit(p0_drive_command, second_current_time);
+    CHECK_EQ_L(static_cast<int>(guard_verdict), static_cast<int>(Verdict::refused_stale), at_ms(second_current_time, second_start_time, "p0 Lapsed Waiting Command"));
     tick_output = second_guard.tick(std::nullopt, second_current_time);
-    compare_tick_output(tick_output, lapsed_tick_output, at_ms(second_current_time, second_start_time, "Lapsed Command"));
+    p0_drive_command = stop(p0);
+    compare_tick_output(tick_output, ended(TickOutputType::lapse, p0), at_ms(second_current_time, second_start_time, "p0 Lapsed Command"));
 
     second_current_time += std::chrono::milliseconds{25};
-    guard_verdict = second_guard.admit(fourth_command, second_current_time);
-    CHECK_EQ_L(static_cast<int>(guard_verdict), static_cast<int>(Verdict::refused_not_centered), at_ms(second_current_time, second_start_time, "Stick Not Centered Waiting Command"));
+    guard_verdict = second_guard.admit(p1_drive_command, second_current_time);
+    CHECK_EQ_L(static_cast<int>(guard_verdict), static_cast<int>(Verdict::refused_not_centered), at_ms(second_current_time, second_start_time, "p1 Stick Not Centered Command"));
     tick_output = second_guard.tick(std::nullopt, second_current_time);
-    compare_tick_output(tick_output, latched_tick_output, at_ms(second_current_time, second_start_time, "Latched Stop Command"));
+    compare_tick_output(tick_output, expect(TickOutputType::latched_stop, p0_drive_command), at_ms(second_current_time, second_start_time, "p1 Latched Stop Command"));
 
     return;
 }
@@ -819,32 +591,32 @@ void test_range(){
     Verdict admit_verdict = guard.admit(p0_nan_x_command, current_time);
     CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "NaN x Stick Command on Startup"));
     TickOutput tick_output = guard.tick(std::nullopt, current_time);
-    compare_tick_output(tick_output,  ended(TickOutputType::latched_burst, ""), at_ms(current_time, start_time, "NaN x Stick Command on Startup"));
+    compare_tick_output(tick_output,  ended(TickOutputType::latched_burst, std::nullopt), at_ms(current_time, start_time, "NaN x Stick Command on Startup"));
     
     current_time += std::chrono::milliseconds{25};
     admit_verdict = guard.admit(p0_nan_y_command, current_time);
     CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "NaN y Stick Command"));
     tick_output = guard.tick(std::nullopt, current_time);
-    compare_tick_output(tick_output, ended(TickOutputType::latched_stop, ""), at_ms(current_time, start_time, "NaN y Stick Command"));
+    compare_tick_output(tick_output, ended(TickOutputType::latched_stop, std::nullopt), at_ms(current_time, start_time, "NaN y Stick Command"));
     
     // Infinite stick tests
     current_time += std::chrono::milliseconds{25};
     admit_verdict = guard.admit(p1_inf_x_command, current_time);
     CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Infinite x Stick Command"));
     tick_output = guard.tick(std::nullopt, current_time);
-    compare_tick_output(tick_output, ended(TickOutputType::latched_stop, ""), at_ms(current_time, start_time, "Infinite x Stick Command"));
+    compare_tick_output(tick_output, ended(TickOutputType::latched_stop, std::nullopt), at_ms(current_time, start_time, "Infinite x Stick Command"));
     
     current_time += std::chrono::milliseconds{25};
     admit_verdict = guard.admit(p1_inf_y_command, current_time);
     CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Infinite y Stick Command"));
     tick_output = guard.tick(std::nullopt, current_time);
-    compare_tick_output(tick_output, ended(TickOutputType::latched_stop, ""), at_ms(current_time, start_time, "Infinite y Stick Command"));
+    compare_tick_output(tick_output, ended(TickOutputType::latched_stop, std::nullopt), at_ms(current_time, start_time, "Infinite y Stick Command"));
     
     current_time += std::chrono::milliseconds{25};
     admit_verdict = guard.admit(p1_inf_command, current_time);
     CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(current_time, start_time, "Infinite Sticks Command"));
     tick_output = guard.tick(std::nullopt, current_time);
-    compare_tick_output(tick_output, ended(TickOutputType::latched_stop, ""), at_ms(current_time, start_time, "Infinite Sticks Command"));
+    compare_tick_output(tick_output, ended(TickOutputType::latched_stop, std::nullopt), at_ms(current_time, start_time, "Infinite Sticks Command"));
     
     // Sticks reset, command accepted, unlatched
     current_time += std::chrono::milliseconds{25};
@@ -912,7 +684,7 @@ void test_range(){
     admit_verdict = second_guard.admit(empty_stop_command, second_current_time);
     CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(second_current_time, second_start_time, "Empty Press ID as Stop Command on Startup"));
     tick_output = second_guard.tick(std::nullopt, second_current_time);
-    compare_tick_output(tick_output, ended(TickOutputType::latched_burst, ""), at_ms(second_current_time, second_start_time, "Empty Press ID as Stop Command on Startup"));
+    compare_tick_output(tick_output, ended(TickOutputType::latched_burst, std::nullopt), at_ms(second_current_time, second_start_time, "Empty Press ID as Stop Command on Startup"));
 
 
     // Third Guard 
@@ -924,7 +696,7 @@ void test_range(){
     admit_verdict = third_guard.admit(empty_reset_sticks_command, third_current_time);
     CHECK_EQ_L(static_cast<int>(admit_verdict), static_cast<int>(Verdict::refused_range), at_ms(third_current_time, third_start_time, "Empty Press ID Command on Startup"));
     tick_output = third_guard.tick(std::nullopt, third_current_time);
-    compare_tick_output(tick_output, ended(TickOutputType::latched_burst, ""), at_ms(third_current_time, third_start_time, "Empty Press ID Command on Startup"));
+    compare_tick_output(tick_output, ended(TickOutputType::latched_burst, std::nullopt), at_ms(third_current_time, third_start_time, "Empty Press ID Command on Startup"));
 }
 
 // 9. Explicit Stop: accepted while latched, while driving, in every state.
@@ -957,15 +729,15 @@ void test_explicit_stop(){
 
     // Startup latch, no new commands send, empty ticks
     tick_output = guard.tick(std::nullopt, current_time);
-    compare_tick_output(tick_output, ended(TickOutputType::latched_burst, ""), at_ms(current_time, start_time, "Startup Latched Burst"));
+    compare_tick_output(tick_output, ended(TickOutputType::latched_burst, std::nullopt), at_ms(current_time, start_time, "Startup Latched Burst"));
 
     // Latched Stops until t = 75ms, no new commands, empty ticks
     current_time += std::chrono::milliseconds{25};
     tick_output = guard.tick(std::nullopt, current_time);
-    compare_tick_output(tick_output, ended(TickOutputType::latched_stop, ""), at_ms(current_time, start_time, "Startup Latched Stop"));
+    compare_tick_output(tick_output, ended(TickOutputType::latched_stop, std::nullopt), at_ms(current_time, start_time, "Startup Latched Stop"));
     current_time += std::chrono::milliseconds{25};
     tick_output = guard.tick(std::nullopt, current_time);
-    compare_tick_output(tick_output, ended(TickOutputType::latched_stop, ""), at_ms(current_time, start_time, "Startup Latched Stop"));
+    compare_tick_output(tick_output, ended(TickOutputType::latched_stop, std::nullopt), at_ms(current_time, start_time, "Startup Latched Stop"));
     
     // Stop command at t = 75
     current_time += std::chrono::milliseconds{25};

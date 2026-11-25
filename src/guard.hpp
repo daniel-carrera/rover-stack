@@ -29,13 +29,16 @@
 struct Command{
     double x;
     double y;
-    std::string press_id;
+    std::optional<std::string> press_id;
     bool is_stop;
+    std::uint64_t sender_start;
+    std::uint64_t sender_counter;
 };
 
 // admit return type, see admit function comment
 enum class Verdict { 
     refused_range,
+    refused_out_of_order,
     refused_stale,
     refused_spent_press,
     refused_not_centered,
@@ -93,18 +96,26 @@ private:
     Command current_command_ = {
         .x = 0.0,
         .y = 0.0,
-        .press_id = "", // the empty press id is the “no live press” marker
-        .is_stop = true
+        .press_id = std::nullopt, // the empty press id is the “no live press” marker
+        .is_stop = true,
+        .sender_start = 0,
+        .sender_counter = 0
     };
     Time command_time_stamp_ = Time{};
-    std::optional<Time> last_burst_time_stamp_ = std::nullopt; // the latched branch bursts when there is 
+    // the latched branch bursts when there is 
+    std::optional<Time> last_burst_time_stamp_ = std::nullopt; 
     // no last burst (on startup), or a whole lease has passed since. 
     std::unordered_set<std::string> spent_press_ids_;
     bool latched_ = true;
+    // a stop, lapse and a takeover fill it too, and it holds the press that was being driven
+    std::optional<std::string> spent_press_;
+    // std::uint64_t sender_start_;
+    // std::uint64_t sender_counter_;
     
     // inclusive to the value is valid
     double center_band_ = 0.1; 
     double max_stick_value_ = 1.0;
     double min_stick_value_ = -1.0;
-
+    // std::uint64_t min_press_id_length_ = 1;
+    // std::uint64_t max_press_id_length_ = 64;
 };
