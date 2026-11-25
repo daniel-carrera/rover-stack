@@ -94,8 +94,19 @@ TickOutput expect(TickOutputType kind, const Command& command){
 }
 // For ended cases: stop_command, lapse, latched_stop, latched_burst
 // The output command is always zeros with the current id, is_stop is true
+// It uses no counter
 TickOutput ended(TickOutputType kind, const std::optional<std::string>& id){
-    return expect(kind, stop(id));
+    return expect(
+        kind, 
+        {
+            .x = 0.0,
+            .y = 0.0,
+            .press_id = id,
+            .is_stop = true,
+            .sender_start = PAGE_SENDER_START,
+            .sender_counter = 0
+        }
+    );
 }
 
 // 1. Healthy command every 50ms for 10s, never a stop 
