@@ -33,6 +33,15 @@ Verdict Guard::admit(Command command, Time now) const {
         return Verdict::refused_range;
     }
 
+    // check ordering: refuse if start is lower or the start is equal and counter is not strictly higher
+    if (
+        command.sender_start < sender_start_ || 
+        (command.sender_start == sender_start_ && 
+        command.sender_counter <= sender_counter_)
+    ) {
+        return Verdict::refused_out_of_order;
+    }
+
     // stale check
     if ((*command.press_id) == (*current_command_.press_id) && now - command_time_stamp_ >= lease_){
         return Verdict::refused_stale;
@@ -71,6 +80,8 @@ TickOutput Guard::tick(std::optional<Command> command, Time now){
             tick_output.kind = TickOutputType::stop_command;
         } else {
             latched_ = false;
+            sender_start_ = current_command_.sender_start;
+            sender_counter_ = current_command_.sender_counter;
             tick_output.kind = TickOutputType::regular_command;
         }
         tick_output.command = current_command_;

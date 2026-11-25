@@ -6,6 +6,7 @@
 #include <optional>
 #include <cmath>
 #include <unordered_set>
+#include <iostream>
 
 // Time and Duration aliases from <chrono>
 #include "src/clock.hpp"
@@ -109,8 +110,8 @@ private:
     bool latched_ = true;
     // a stop, lapse and a takeover fill it too, and it holds the press that was being driven
     std::optional<std::string> spent_press_;
-    // std::uint64_t sender_start_;
-    // std::uint64_t sender_counter_;
+    std::uint64_t sender_start_ = 0;
+    std::uint64_t sender_counter_ = 0;
     
     // inclusive to the value is valid
     double center_band_ = 0.1; 
