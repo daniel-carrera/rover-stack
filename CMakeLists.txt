@@ -22,13 +22,19 @@ include_directories(${CMAKE_SOURCE_DIR})   # so that "src/..." and "src/tests/..
 # The guard, built once as a library.
 add_library(guard src/guard.cpp)
 
+# The driver, built once as a library.
+add_library(driver src/driver.cpp)
+
 # The programs: one guard file.
 # TODO Later, first the core, it waits for the loop, port, and multithreading
 
 # The tests for the guard 
 add_executable(test_guard src/tests/test_guard.cpp)
 
-foreach(program test_guard)
-  target_link_libraries(${program} PRIVATE guard)
-endforeach()
+# The tests for the driver 
+add_executable(test_driver src/tests/test_driver.cpp)
+
+# Linking the libraries
+target_link_libraries(test_guard PRIVATE guard)
+target_link_libraries(test_driver PRIVATE driver)
 
