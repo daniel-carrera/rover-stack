@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stddef>
+#include <string>
 #include <optional>
 
 #include "src/port.hpp"
@@ -9,7 +9,16 @@
 enum class DriveStatus {
     frame_written,
     write_timed_out,
+    write_error,
     refused
+};
+
+enum class FaultReason {
+    not_armed_yet,
+    feedback_silent,
+    bad_speed,
+    write_timed_out,
+    port_error
 };
 
 struct WheelSpeeds {
@@ -26,19 +35,23 @@ class Driver {
 public:
     Driver(
         Port& port
-    ): port_(port_) {}
+    ): port_(port) {}
     
-    std::optional<BoardFeedback> tick(Time now); 
     DriveStatus drive(WheelSpeeds wheel_speeds);
     DriveStatus stop();
+    std::optional<BoardFeedback> tick(Time now); 
+    std::optional<FaultReason> reason() const;
     bool rearm();
-    bool is_faulted();
+
 
 private:
     Port& port_;
-    std::string unfinished_line;
-    bool faulted_ = true;
-    Time last_good_feedback_;
-    int rearm_count = 0;
-    constexpr Duration max_wait_time_ = std::chrono::milliseconds{165};
+    std::string unfinished_line_;
+    std::optional<FaultReason> reason_ = FaultReason::not_armed_yet;
+    std::optional<Time> last_good_feedback_;
+    int rearm_count_ = 0;
+
+    static constexpr double max_wheel_speed = 2.0;
+    static constexpr int rearm_count_threshold = 20;
+    static constexpr Duration feedback_lease = std::chrono::milliseconds{165};
 };

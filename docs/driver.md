@@ -21,7 +21,7 @@ There are two calls.
 
 The core loop converts stick values to wheel speeds before it calls `drive`. The driver never sees a stick value.
 
-A call gives back one of three answers: the frame was written, the write timed out, or the request was refused.
+A call gives back one of four answers: the frame was written, the write timed out, the port answered with an error, or the request was refused. After a timed out or an error answer, the rest of that tick's writes are skipped.
 
 A `drive` is refused while the driver is faulted. A `drive` with either wheel speed at or above 2.0 in either direction is refused too, and it raises a fault. The first version's code says the firmware ignores such a speed, and a request for one means the core loop's conversion is wrong. Nothing is written for a refused drive.
 
